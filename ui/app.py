@@ -437,7 +437,7 @@ def get_leaderboard(niche: Optional[str] = Query(None)):
 def evaluate_niche(
     niche: str = Query(..., description="Niche to evaluate (must already be exported)"),
     test_set_path: str = Query(..., description="JSONL test set ({question,reference_answer} or {prompt,completion})"),
-    base_model: str = Query("Qwen/Qwen2.5-0.5B-Instruct", description="Base model for the baseline"),
+    base_model: str = Query("", description="Base model for the baseline; defaults to the base the adapter was fine-tuned from"),
     max_questions: int = Query(10, ge=1, le=500, description="Cap eval questions (CPU is slow)"),
 ):
     """Evaluate the base model (baseline) and the fine-tuned model on a JSONL test set,
@@ -453,6 +453,15 @@ def evaluate_niche(
         raise HTTPException(404, f"No exported model for niche '{niche}'. Export it first.")
 
     harness = EvalHarness(config)
+
+    # Default the baseline to the exact base the adapter was fine-tuned from (recorded
+    # in the adapter dir). The fine-tuned model is that base + the LoRA delta, so this
+    # keeps the comparison apples-to-apples and backend-appropriate (the UI's training
+    # base-model picker is an MLX 4-bit id that the HF inference server can't load).
+    if not base_model:
+        from pipeline.export_hf import _resolve_base_model
+        adapter_dir = os.path.join(config.get("paths", {}).get("adapter_path", "models/adapters"), niche)
+        base_model = _resolve_base_model(adapter_dir, config)
 
     # 1) Baseline — serve the base model, evaluate, then unload to free RAM.
     base_name = f"{served}-base"
@@ -2714,13 +2723,14 @@ async function exportModel(btn) {
 async function evaluateModel(btn) {
   const niche = document.getElementById('ft-niche').value;
   const testSet = document.getElementById('ft-data-path').value;
-  const baseModel = document.getElementById('ft-base-model').value;
   if (!niche || !testSet) { alert('Set a niche and a dataset path first.'); return; }
   if (btn) { btn.disabled = true; btn.style.opacity = 0.5; }
   document.getElementById('ft-message').textContent = 'Evaluating base vs fine-tuned on the test set… (CPU — can take a minute or two)';
   try {
+    // Omit base_model: the backend resolves the exact base the adapter was fine-tuned
+    // from, so the baseline matches the fine-tuned model's base on either backend.
     const qs = '?niche='+encodeURIComponent(niche)+'&test_set_path='+encodeURIComponent(testSet)
-             + '&base_model='+encodeURIComponent(baseModel)+'&max_questions=10';
+             + '&max_questions=10';
     const res = await fetch('/api/evaluate'+qs, {method:'POST'});
     if (!res.ok) {
       let msg = 'Evaluation failed ('+res.status+')';

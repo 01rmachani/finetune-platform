@@ -261,7 +261,9 @@ class RecursiveLoop:
         else:
             from pipeline.export_hf import export_model as export_hf_model
             self._ensure_inference_server()
-            export_hf_model(niche=iter_niche, adapter_path=adapter_path, config=self.config, register=True)
+            merged = export_hf_model(niche=iter_niche, adapter_path=adapter_path, config=self.config, register=True)
+            if not merged:
+                raise RuntimeError(f"Export failed for '{iter_niche}' — no merged model produced.")
             eval_model = iter_niche.replace("_", "-").lower()
             eval_score = self.eval_harness.evaluate(
                 model_id=eval_model, test_set_path=test_set, model_type="inference",
@@ -381,35 +383,51 @@ class RecursiveLoop:
             py = sys.executable
         worker = os.path.join(self.pipeline_dir, "training_worker_hf.py")
         print("  Training via HuggingFace/CPU worker...")
-        proc = subprocess.Popen(
-            [py, worker], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE, text=True, cwd=self.project_root,
-        )
-        proc.stdin.write(json.dumps(worker_config) + "\n")
-        proc.stdin.flush()
-        proc.stdin.close()
-        completed = False
-        for line in proc.stdout:
-            line = line.strip()
-            if not line:
-                continue
+        # Send the worker's stderr to a file rather than a PIPE: we only read
+        # stdout (the JSONL event stream), and a chatty first run (HF model
+        # download progress bars, torch/transformers warnings) would otherwise
+        # fill the OS stderr pipe buffer and deadlock the worker.
+        err_path = os.path.join(tempfile.gettempdir(), f"recur_train_{niche}.stderr.log")
+        errf = open(err_path, "w")
+
+        def _err_tail() -> str:
+            errf.flush()
             try:
-                ev = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            et = ev.get("event")
-            if et == "progress" and ev.get("step"):
-                print(f"    step {ev['step']}/{ev.get('total_steps', '?')} loss={ev.get('loss')}")
-            elif et == "complete":
-                completed = True
-                print(f"    training complete: final_loss={ev.get('final_loss')}")
-            elif et == "error":
-                err = proc.stderr.read() if proc.stderr else ""
-                raise RuntimeError(f"HF training failed: {ev.get('message')}\n{err[:500]}")
-        proc.wait()
-        if not completed:
-            err = proc.stderr.read() if proc.stderr else ""
-            raise RuntimeError(f"HF training did not complete.\n{err[:500]}")
+                with open(err_path) as f:
+                    return f.read()[-500:]
+            except Exception:
+                return ""
+
+        try:
+            proc = subprocess.Popen(
+                [py, worker], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                stderr=errf, text=True, cwd=self.project_root,
+            )
+            proc.stdin.write(json.dumps(worker_config) + "\n")
+            proc.stdin.flush()
+            proc.stdin.close()
+            completed = False
+            for line in proc.stdout:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    ev = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                et = ev.get("event")
+                if et == "progress" and ev.get("step"):
+                    print(f"    step {ev['step']}/{ev.get('total_steps', '?')} loss={ev.get('loss')}")
+                elif et == "complete":
+                    completed = True
+                    print(f"    training complete: final_loss={ev.get('final_loss')}")
+                elif et == "error":
+                    raise RuntimeError(f"HF training failed: {ev.get('message')}\n{_err_tail()}")
+            proc.wait()
+            if not completed:
+                raise RuntimeError(f"HF training did not complete.\n{_err_tail()}")
+        finally:
+            errf.close()
 
     def run_recursive(
         self,
@@ -450,15 +468,21 @@ class RecursiveLoop:
         print(f"{'#'*60}")
 
         for i in range(1, max_iterations + 1):
-            result = self.run_iteration(
-                niche_name=niche_name,
-                niche_desc=niche_desc,
-                iteration=i,
-                epochs=epochs_per_iter,
-                max_rows=max_rows,
-                skip_data_generation=skip_data_generation,
-                existing_data_path=existing_data_path,
-            )
+            try:
+                result = self.run_iteration(
+                    niche_name=niche_name,
+                    niche_desc=niche_desc,
+                    iteration=i,
+                    epochs=epochs_per_iter,
+                    max_rows=max_rows,
+                    skip_data_generation=skip_data_generation,
+                    existing_data_path=existing_data_path,
+                )
+            except Exception:
+                # Don't leak the inference server we may have spawned (:7200) if an
+                # iteration blows up — _stop_inference_server only stops one we started.
+                self._stop_inference_server()
+                raise
 
             results.append(result)
 

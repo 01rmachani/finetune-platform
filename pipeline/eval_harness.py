@@ -90,7 +90,8 @@ class EvalHarness:
                 f"{host}/api/chat", data=payload,
                 headers={"Content-Type": "application/json"}, method="POST",
             )
-            data = json.loads(urllib.request.urlopen(req, timeout=120).read())
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                data = json.loads(resp.read())
             if data.get("error"):
                 return f"[ERROR: {data['error']}]"
             return ((data.get("message") or {}).get("content") or "").strip()
@@ -111,7 +112,8 @@ class EvalHarness:
                 f"http://127.0.0.1:{port}/v1/chat/completions", data=payload,
                 headers={"Content-Type": "application/json"}, method="POST",
             )
-            data = json.loads(urllib.request.urlopen(req, timeout=timeout).read())
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                data = json.loads(resp.read())
             choice = (data.get("choices") or [{}])[0]
             return ((choice.get("message") or {}).get("content") or choice.get("text") or "").strip()
         except Exception as e:
@@ -166,7 +168,7 @@ class EvalHarness:
         """
         with open(test_set_path) as f:
             test_data = [json.loads(line) for line in f if line.strip()]
-        if max_questions:
+        if max_questions is not None:
             test_data = test_data[:max_questions]
 
         print(f"\nEvaluating {model_id} on {len(test_data)} questions...")
