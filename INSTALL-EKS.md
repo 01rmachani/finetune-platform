@@ -5,9 +5,46 @@ OpenAI-compatible inference `:7200`) on Amazon EKS, using the **HuggingFace/PyTo
 CPU backend** (works on any amd64 node — e.g. `m5.xlarge`; MLX/Metal is Mac-only and
 not used in-cluster).
 
-You build the image from the included source and push it to **your own registry**
-(ECR or GHCR), then `helm install` the included chart. No dependency on any private
-image.
+There are two paths:
+- **Quick (no build)** — use the prebuilt **public** image. One command. ⬇ start here.
+- **Build your own** — build from the included source and push to your registry
+  (ECR/GHCR). Use this if your cluster can't reach `ghcr.io` or you need a custom build.
+
+---
+
+## Quick install (self-contained appliance — 2 steps)
+
+The public image `ghcr.io/t4tarzan/finetune-platform:latest` (amd64) is the chart's
+default and is **fully self-contained**: it bakes the base models (Qwen2.5-0.5B +
+1.5B), the SRE observability dataset (43 tables), the training data, **and** a
+pre-trained `sre-assistant` adapter. No `docker build`, no pull secret, **no model
+download at runtime**.
+
+```bash
+# prereqs: kubectl pointed at your cluster, helm, a gp3 StorageClass, an amd64 node
+helm install finetune-platform charts/finetune-platform \
+  --namespace finetune --create-namespace \
+  --set persistence.storageClass=gp3
+
+kubectl -n finetune rollout status deploy/finetune-platform
+kubectl -n finetune port-forward svc/finetune-platform 7100:7100   # http://localhost:7100
+```
+
+Or just run the bundled script: `bash scripts/install-eks.sh`
+
+On first boot it seeds the 43 tables into DuckDB and merges the bundled adapter into a
+served **`sre-assistant`** model. Out of the box you get:
+- **Preset cards** in the chat (pods at risk, OOM offenders, alert volume, …) — pure SQL, no model
+- **🗄️ Query data** mode — ask in English, the model writes SQL over your tables
+- a fine-tuned **`sre-assistant`** in the model dropdown
+- the **train → append data → retrain** loop
+
+> **Air-gapped:** the only network use is pulling the image from `ghcr.io`. Mirror the
+> image into your private registry (or `docker save`/`load`) and set
+> `--set image.repository=<your-registry>/finetune-platform` — then it runs with **zero
+> internet**. Everything else is baked in.
+
+Skip to **§3 Open the UI**. The rest below is the build-your-own path (custom registry).
 
 ---
 
@@ -105,14 +142,23 @@ helm upgrade finetune-platform charts/finetune-platform -n finetune --reuse-valu
 kubectl -n finetune get svc finetune-platform -w        # grab EXTERNAL-IP
 ```
 
-**Ingress (ALB example):**
+**Ingress — own host (ALB example):**
 ```bash
 helm upgrade finetune-platform charts/finetune-platform -n finetune --reuse-values \
   --set ingress.enabled=true --set ingress.className=alb \
   --set ingress.host=finetune.example.com
 ```
-> The app uses absolute `/api/...` URLs, so give it its **own host** (path `/`).
-> Don't serve it under a sub-path with a rewrite — its API calls won't resolve.
+
+**Ingress — shared nginx under a sub-path** (e.g. `https://<host>/finetune-platform`):
+```bash
+helm upgrade finetune-platform charts/finetune-platform -n finetune --reuse-values \
+  --set ingress.enabled=true --set ingress.className=nginx \
+  --set basePath=/finetune-platform
+```
+> `basePath` makes the app serve under that prefix: it sets `BASE_PATH` in the pod
+> (so the UI prefixes every API call) and auto-configures the nginx ingress (regex
+> path + `rewrite-target` that strips the prefix). Leave `basePath` empty for a
+> dedicated host or LoadBalancer.
 
 ---
 

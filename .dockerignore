@@ -16,7 +16,10 @@ data/sre-pods/*
 !data/sre-pods/dataset_v1.jsonl
 !data/sre-pods/dataset_v2.jsonl
 !data/example_train.jsonl
-models/
+models/*
+!models/adapters
+models/adapters/*
+!models/adapters/sre-assistant
 logs/
 benchmarks/
 *.log

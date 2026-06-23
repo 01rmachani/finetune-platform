@@ -1,0 +1,13 @@
+{
+  "niche": "sre-assistant",
+  "base_model": "Qwen/Qwen2.5-0.5B-Instruct",
+  "epochs": 2.0,
+  "batch_size": 4,
+  "lora_rank": 16,
+  "learning_rate": 0.0001,
+  "training_examples": 940,
+  "total_iters": 470,
+  "final_loss": 0.291223,
+  "duration_seconds": 672,
+  "backend": "huggingface-cpu"
+}
