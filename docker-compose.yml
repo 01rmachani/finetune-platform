@@ -23,6 +23,12 @@ services:
       - PORT=7100
       - INFERENCE_PORT=7200
       - HF_HOME=/root/.cache/huggingface
+      # Reach an Ollama running on the host (for base-model chat). Works on macOS
+      # Docker Desktop and, via the host-gateway alias below, on Linux. If you don't
+      # run Ollama, base models simply don't appear — fine-tuned models still do.
+      - OLLAMA_HOST=http://host.docker.internal:11434
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./data:/app/data            # datasets + training history (persisted)
       - ./models:/app/models        # adapters + merged models (persisted)
