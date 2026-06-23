@@ -5,9 +5,38 @@ OpenAI-compatible inference `:7200`) on Amazon EKS, using the **HuggingFace/PyTo
 CPU backend** (works on any amd64 node — e.g. `m5.xlarge`; MLX/Metal is Mac-only and
 not used in-cluster).
 
-You build the image from the included source and push it to **your own registry**
-(ECR or GHCR), then `helm install` the included chart. No dependency on any private
-image.
+There are two paths:
+- **Quick (no build)** — use the prebuilt **public** image. One command. ⬇ start here.
+- **Build your own** — build from the included source and push to your registry
+  (ECR/GHCR). Use this if your cluster can't reach `ghcr.io` or you need a custom build.
+
+---
+
+## Quick install (no build — public image)
+
+The image `ghcr.io/t4tarzan/finetune-platform:latest` is **public** (amd64), and it's
+the chart's default — so installing is one command (no `docker build`, no pull secret):
+
+```bash
+# prereqs: kubectl pointed at your EKS cluster, helm, a gp3 StorageClass, an amd64 node
+helm install finetune-platform charts/finetune-platform \
+  --namespace finetune --create-namespace \
+  --set persistence.storageClass=gp3 \
+  --set ollama.enabled=true
+
+kubectl -n finetune rollout status deploy/finetune-platform     # first boot pulls the base model
+kubectl -n finetune exec -c ollama deploy/finetune-platform -- ollama pull qwen2.5:0.5b
+kubectl -n finetune port-forward svc/finetune-platform 7100:7100   # http://localhost:7100
+```
+
+Or just run the bundled script: `bash scripts/install-eks.sh`
+
+> Needs egress to `ghcr.io` (image) and `huggingface.co` (base model on first train).
+> Air-gapped? Use the build path and mirror those into your registry/cache.
+> The two demo datasets are baked into the image and auto-seeded into the volume, so
+> they appear in the Train dropdown immediately.
+
+Skip to **§3 Open the UI**. The rest below is the build-your-own path.
 
 ---
 
