@@ -23,12 +23,23 @@ COPY requirements.txt .
 RUN pip install torch==2.12.0 --index-url https://download.pytorch.org/whl/cpu \
  && pip install -r requirements.txt
 
+# Bake the base models into the HF cache so the appliance trains/serves with NO
+# network (air-gapped). BAKE_MODELS=0 builds a lean, online image instead.
+# Layered before COPY so it caches independently of app-code changes.
+ARG BAKE_MODELS=1
+ARG HF_BAKE="Qwen/Qwen2.5-0.5B-Instruct Qwen/Qwen2.5-1.5B-Instruct"
+RUN if [ "$BAKE_MODELS" = "1" ]; then \
+      for m in $HF_BAKE; do python -c "from huggingface_hub import snapshot_download; snapshot_download('$m')"; done ; \
+    fi
+# Runtime offline: never reach the network for model files.
+ENV HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
+
 COPY . .
 
-# Generate the bundled SRE observability tables into the image (data/sre-tables/*.csv).
-# Done at build (not committed) so the appliance ships with the data; the chart's init
-# container seeds these into the data volume on first boot for the chat's preset cards.
-RUN python scripts/gen_sre_tables.py
+# Generate the bundled SRE observability tables (for the chat's preset cards) AND the
+# SRE Q&A training set (selectable in the Train dropdown), baked into the image; the
+# chart's init container seeds both into the data volume on first boot.
+RUN python scripts/gen_sre_tables.py && python scripts/gen_sre_qa.py
 
 # 7100 = web UI (chat + train) · 7200 = OpenAI-compatible inference server
 EXPOSE 7100 7200

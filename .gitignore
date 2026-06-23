@@ -15,7 +15,10 @@ venv/
 .env.local
 
 # Training artifacts (regenerated per-run, keep examples)
-models/adapters/
+models/adapters/*
+# Keep the bundled SRE assistant adapter (small LoRA) so the appliance ships a
+# ready fine-tuned model; merged at first boot.
+!models/adapters/sre-assistant
 models/gguf/
 
 # Per-run datasets / history / DBs (generated locally, not source).

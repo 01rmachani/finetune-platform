@@ -801,6 +801,25 @@ def _seed_observability_tables():
         print(f"[startup] observability seed skipped: {e}")
 
 
+@app.on_event("startup")
+def _seed_sre_adapter():
+    """Merge the bundled SRE adapter into a served model on first boot, so a
+    fine-tuned 'sre-assistant' appears in the chat dropdown out of the box.
+    Idempotent: skips if already merged. Runs off the event loop."""
+    try:
+        adapter = os.path.join(config.get("paths", {}).get("models", "models"), "adapters", "sre-assistant")
+        merged = os.path.join(config.get("paths", {}).get("export_path", "models/gguf"), "sre-assistant_merged")
+        if os.path.isdir(adapter) and not os.path.isdir(merged):
+            import threading
+            def _merge():
+                ok, detail = _run_export_subprocess("sre-assistant", adapter)
+                print(f"[startup] sre-assistant export: ok={ok} {('' if ok else detail)}")
+            threading.Thread(target=_merge, daemon=True).start()
+            print("[startup] merging bundled sre-assistant adapter in background…")
+    except Exception as e:
+        print(f"[startup] sre-assistant seed skipped: {e}")
+
+
 # ── Preset cards — one-tap SQL over the local observability tables ──────────
 # Air-gap safe: pure SQL, no model needed. Powers the chat's quick-action strip.
 PRESET_CARDS = [
